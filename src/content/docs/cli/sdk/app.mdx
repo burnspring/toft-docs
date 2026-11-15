@@ -1,0 +1,145 @@
+---
+title: The app itself
+description: Read the app's id, slug, mode and mount path, and ask what an administrator attached.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Who am I
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+toft.app.id, toft.app.slug, toft.app.name, toft.app.mode, toft.app.base_path
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+toft.app.id;  toft.app.slug;   // plain properties
+await toft.app.mode();         // also name(), basePath()
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+self, err := toft.App.Self(ctx)   // self.ID, .Slug, .Name, .Mode, .BasePath
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+info <- app_info()                # info$slug, info$base_path, ...
+app_base_path()
+```
+
+</TabItem>
+</Tabs>
+
+:::caution[Node: id and slug are properties, the rest are async]
+In Node, `toft.app.id` and `toft.app.slug` are plain strings — calling them,
+`toft.app.slug()`, is a `TypeError`. Off the platform they raise `off_platform`
+rather than answering `""`, as every other field does. `name()`, `mode()` and `basePath()` return
+a Promise: forget the `await` and a template renders `[object Promise]`. In
+Python they are all plain properties.
+:::
+
+Inside a [job](../jobs/#inside-the-job), `toft.app` is refused with
+`job_send_only`, `id` and `slug` included — except in Node, where `app.slug`
+answers from the environment and `app.id` raises `off_platform`.
+
+The answer is fetched once and cached for the life of the process. Call
+`toft.app.refresh()` (Go: `toft.App.Refresh()`) to re-read it.
+
+### Base path
+
+Your app is served under `/apps/<slug>`, and `base_path` is that prefix. Build
+every link and form action from it. Redirects (`Location`) must not include it;
+the proxy adds it. It falls back to the `BASE_PATH` variable, so it is never empty
+on a mounted app. See [Environment variables](../../reference/environment/).
+
+### Links that leave the app
+
+A link in an email, a Slack message, a PDF or a ticket has to be absolute, and
+your app can't work it out from the request: the request reaches your app at an
+internal address, and a job has no request at all. Ask the SDK instead:
+
+```python
+toft.app.url("/reports/42")    # https://apps.example.com/apps/reporter/reports/42
+toft.app.url()                 # the app's front page
+toft.app.url(run.status_url)   # a job run's status page
+```
+
+Node: `await toft.app.url("/reports/42")`. Go: `toft.App.URL(ctx, "/reports/42")`.
+R: `app_url("/reports/42")`.
+
+- Pass the path inside your app. `/reports/42` and `reports/42` mean the same
+  page. A path that already starts with the base path isn't given it twice.
+- It works the same in a web request, a job and a schedule.
+- The address comes from the install each time (reused for a minute), so if an
+  administrator moves the install or gives your app its own hostname, new links
+  follow without a restart. Don't put the address in `toft.toml` or an
+  environment variable.
+- If the install has no address for its apps, the call fails with
+  `no_public_address`. An administrator sets it in the install's configuration
+  (`APPS_BASE_URL`).
+
+Inside your own pages, keep using relative links built from `base_path`. If your
+framework builds URLs from the request, tell it to trust the `X-Forwarded-Host`,
+`X-Forwarded-Proto` and `X-Forwarded-Prefix` headers, which Toft sets on every
+request (for Flask, Werkzeug's `ProxyFix`).
+
+### Mode
+
+`mode` is `shared` or `isolated` for **this** running workload, taken from the
+deployment that started it. It is correct on the first request.
+
+## What did an administrator attach
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+if toft.app.can("email"): ...
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+if (await toft.app.can("email")) { … }
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+ok, err := toft.App.Can(ctx, "email")
+```
+
+</TabItem>
+</Tabs>
+
+`can()` takes an integration name (`email`, `slack`) or a full capability
+(`email.send`). `toft.app.capabilities` lists everything attached. `can("")` is
+`bad_request`.
+
+Check at startup. An app that does can tell someone "email is not enabled for
+this app" on a settings screen instead of failing later in a log.
+
+A kind nobody attached is absent, not switched off. The fix is to ask an
+administrator, not to retry.
+
+R has no `can()`. `app_info()` includes the capabilities the install granted.
+
+## What the app is not told
+
+- Which channel, folder or address an integration points at. That belongs to
+  the administrator.
+- Whether a viewer is a Toft administrator, from the role alone. Use
+  [`who`](../viewer/).
+- Other people's group memberships.

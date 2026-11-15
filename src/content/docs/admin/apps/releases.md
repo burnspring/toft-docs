@@ -1,0 +1,70 @@
+---
+title: Deployments, rollback and retention
+description: What a build leaves behind, how rollback works, and how many deployments each app keeps.
+---
+
+Every successful deploy is kept as a **deployment**. One is serving; the others are what an
+owner can roll back to.
+
+## Retention
+
+| Setting | Where | Effect |
+|---|---|---|
+| **Most deployments an app may keep** (`max_versions_per_app`) | Admin → Settings | Caps every app, whatever its owner asks. `0` means no limit. |
+| **Delete old deployments automatically**, **Deployments to keep** | The app's settings | The owner's choice, within your cap |
+
+Only successful deployments count toward either number, and the serving one is
+one of them. A failed build's files are removed when it fails; its entry and
+build log stay, so a run of failed deploys never pushes a rollback target off
+the disk.
+
+Owners see the policy that applies on the app's **Deployments** tab.
+
+**Deployments to keep** is 3 by default, so an app rolls back at most two
+deployments unless its owner raises it. Each deploy that deletes older
+deployments records an informational **Old versions removed** event on the app naming
+them (`releases_pruned`); it is never emailed.
+
+An owner can delete one deployment, or every one that is not current. Deleting an
+app removes its deployments, workload and storage attachments — not the data in a
+store.
+
+## Rollback
+
+The owner picks a deployment and makes it current; the workload restarts onto it
+with no rebuild. `toft rollback` does the same and names the deployment first.
+
+A deployment built before the app's base path changed — a rename, or a
+[hostname](../hostnames/) switched on or off — cannot serve at the new address
+as it is, so rolling back to it rebuilds its files there as a new deployment.
+That rebuilt deployment records the release it restored as `restored_from` in
+`GET /api/v1/apps/{id}/deployments`, and so does the rebuild a rename or hostname
+switch makes of the serving release, so a client can tell which release is
+really serving. A plain rollback creates no new deployment: the release it
+switched to is the one serving.
+
+**A restart is not a deploy.** The dependency policy, source policy and language
+version are judged as they were for that deployment, so an app does not fail to
+return because an advisory landed overnight.
+
+:::note[Rollback changes code only]
+Environment variables, app data, storage contents and anything the app wrote are
+unchanged. Rolling back code does not unmigrate a database.
+:::
+
+## Deployments are not edited in place
+
+A start replaces the deployment's directory from the stored artifact. Editing
+files in a running app's directory does not survive a restart.
+
+Deployments live under `APPS_DIR` by default. If the disk does not survive
+replacement, or you run isolated mode, configure an
+[artifact store](../artifact-store/).
+
+## A deleted app leaves nothing behind
+
+Deleting an app removes its directories under `APPS_DIR` and `JOB_RUN_DIR`. Every
+five minutes Toft also removes any directory there that no app owns and that has
+been untouched for an hour — left by a crash, or by a build still running when its
+app was deleted. **Admin → System checks** shows the last one it removed under
+*Release disk*.

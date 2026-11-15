@@ -1,0 +1,201 @@
+---
+title: Who is asking
+description: caller, who and viewer — what a request may do, who sent it, and acting on their behalf.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Three calls answer three different questions.
+
+| Call | Question | Round trip | Anonymous visitor |
+|---|---|---|---|
+| `caller(headers)` | What may they do? | No | Role `anonymous` |
+| `who(headers)` | Who are they? | Yes | `None` / `null` |
+| `viewer(headers)` | Act as them | On use | Raises |
+
+## `caller`: what they may do
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+c = toft.caller(request.headers)
+if not c.at_least(toft.ROLE_EDITOR):
+    abort(403)
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+const c = toft.caller(req.headers);
+if (!c.atLeast(toft.ROLE_EDITOR)) return res.status(403).end();
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+c := toft.CallerFor(r.Header)
+if !c.AtLeast(toft.RoleEditor) { … }
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+caller_role(req$HEADERS)                 # "editor", "viewer", ... or "unknown"
+caller_can(req$HEADERS, "editor")        # TRUE / FALSE
+```
+
+</TabItem>
+</Tabs>
+
+The role arrives signed on every request and is verified locally against
+`TOFT_ROLE_KEY`. It never fails: a missing, invalid or expired role reads as
+`unknown`, and every `at_least` check on it is false. Use this in request
+handlers. See [The six roles](../../reference/roles/).
+
+`is_person` means the caller is on the person ladder (`anonymous`, `viewer`,
+`editor`, `owner`), not that a human is there. An anonymous visitor is
+`is_person` true and `signed_in` false; a schedule firing (`system`), the app
+itself (`app`) and `unknown` are false for both. (R has `caller_role()` and
+`caller_can()` only.)
+
+A word that is not a role — `at_least("superuser")`, `caller_can(h, "")` — is
+`bad_request`, so a typo fails loudly rather than denying everyone. In Go,
+`AtLeast` has only a bool to return, so it panics with that `*toft.Error`.
+
+## `who`: who they are
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+me = toft.who(request.headers)           # Identity, or None
+if me and (me.role == "owner" or me.is_admin):
+    render_admin_tab()
+if me and "finance" in me.group_names:
+    render_approvals()
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+const me = await toft.who(req.headers);
+if (me?.role === "owner" || me?.isAdmin) renderAdminTab();
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+me, err := toft.Who(ctx, r.Header)       // *Identity, or nil
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+me <- viewer(req$HEADERS)                # a list, or NULL
+```
+
+</TabItem>
+</Tabs>
+
+An identity has `id`, `name`, `email`, `role`, `is_admin` and `groups`. It returns nothing
+for an anonymous visitor, because that is an answer, not an error.
+
+It also returns nothing for a request with no viewer on it at all — a health
+check, or code running inside a job — and for a request made with an **API
+key** (`toft fetch`, `curl` with a key).
+
+**An API key carries its owner's role but no viewer.** Toft signs the key
+owner's role onto the request, so `caller()` reports it — `owner` for the
+owner's own key — with `is_person` and `signed_in` true, meaning *a role on the
+person ladder*. But it sends no viewer, so `who()` returns nothing and
+`viewer(headers)` raises `no_viewer`. To test viewer code from a terminal,
+`toft fetch --session` sends the request as a signed-in browser (see [The
+administrator's session](../../cli/signing-in/#the-administrators-session)).
+
+It fails for one reason: a signed-in person is looking and viewer identity is not
+switched on for this app. That is an administrator's setting — **Can see who
+is viewing** on the app's Settings tab ([Viewer
+identity](../../../admin/apps/viewer-identity/)) — not a state to
+branch on. With nobody on the request — anonymous, or an API key — it returns
+nothing whatever the setting; `toft.app.can("viewer.identity")` reads the
+setting itself.
+
+- `role` is `owner`, `editor` or `viewer` on this app in Toft. When a group owns
+  the app, every member of that group is `owner`. A rule about your own domain,
+  such as who approves invoices, belongs on groups.
+- `is_admin` is separate. `role` comes from ownership and grants alone, so an
+  administrator with no grant on the app reads as `viewer` with `is_admin` true.
+  To let administrators in, check `is_admin` beside the role, as above.
+- `email` is empty on a public app.
+
+Answers are cached for 60 seconds. Pass `refresh=True` (Node `{ refresh: true }`,
+Go `WhoNow`) to bypass.
+
+In Node, the `Viewer` for an anonymous visitor prints as `[Viewer: an anonymous
+visitor; nobody is signed in]` (Go: `<toft.Viewer (an anonymous visitor; nobody is
+signed in)>`), so a log line says what it is.
+
+## `viewer`: act as them
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+me = toft.viewer(request.headers)
+me.jobs.start("reconcile", params={"month": month})
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+const me = toft.viewer(req.headers);
+await me.jobs.start("reconcile", {});
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+me, err := toft.ViewerFor(r.Header)
+me.Jobs.Start(ctx, "reconcile", opts)
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+viewer_jobs(req) |> job_start("reconcile", params = list(month = month))
+```
+
+</TabItem>
+</Tabs>
+
+Work started through `viewer()` is recorded in that person's name. It raises
+`no_viewer` when the request carries no viewer at all (an API key, a health
+check), rather than silently acting as the app. An anonymous visitor to a
+public app carries a viewer that names nobody: a start, a list, a get or a cancel through it is
+refused `viewer_anonymous`, `retryable` false, with a hint to make the call as the
+app (`toft.jobs.start`, `toft.Jobs.Start`, `job_start` without a viewer) — catch it,
+or check the caller's role is not `anonymous` first.
+Toft adds no role check of its own: declaring the job allows your app to start
+it, and whether this person may press the button is your app's rule. Answer
+the request with `toft.jobs.respond(run)`; see [Jobs](../jobs/#respond-dont-wait).
+
+## Your app enforces its own rules
+
+The platform tells your app what the caller may do; it does not enforce anything
+inside your app. Protect your own admin screens.
+
+- **Never trust a raw header.** Anything that can reach your app can send one.
+  `caller()` verifies the signature.
+- **A role is not an identity.** It doesn't say who, or whether a human is there.
+- **A Toft administrator with no grant on your app reads as `viewer`.** Use
+  `who` to see `is_admin`.

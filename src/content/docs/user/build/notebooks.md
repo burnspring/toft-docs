@@ -1,0 +1,76 @@
+---
+title: Notebooks and documents
+description: Publish a Jupyter notebook, Quarto or R Markdown document as a page.
+---
+
+A repository with one `.ipynb`, `.qmd` or `.Rmd` at its root is a **document
+app**: Toft runs it once during the deploy and serves the HTML it produces.
+
+| Source | Rendered with |
+|---|---|
+| `.ipynb` | nbconvert (Python), or Quarto if you declare `engine = "quarto"` |
+| `.qmd` | Quarto, with Python or R depending on its engine |
+| `.Rmd` | R Markdown |
+| `.Rmd` with `runtime: shiny` (or `shinyrmd`, `shiny_prerendered`) | Not a document — served live with `rmarkdown::run`, like a [Shiny app](../r/). List `shiny` and `rmarkdown` in `renv.lock`. |
+
+For a document viewers can interact with, use marimo, Streamlit or Shiny
+instead.
+
+## It runs at deploy time
+
+Visitors execute nothing; they read the output.
+
+- The numbers are from deploy time. Refresh them by redeploying, or with a
+  [render schedule](../reports/).
+- A slow document is a slow deploy. Past the render timeout your administrator
+  sets, the deploy fails.
+- A failing document fails the deploy, and the previously published version
+  stays up.
+
+:::danger[Output is published]
+The document runs with your app's environment variables. Anything it prints —
+a connection string included — ends up on the page. The build log lists which
+variables were available.
+:::
+
+## Dependencies
+
+Toft installs the renderer (Jupyter, nbconvert or Quarto). Declare only what
+your document imports: `requirements.txt` for Python, `renv.lock` for R. An R
+document with no `renv.lock` still renders, with nothing installed, so the
+deploy fails at the render step naming the first missing package.
+
+The render is a build step, not a running app, so a [Toft SDK](../../../cli/sdk/what-it-is/)
+call from a chunk or cell is refused with `off_platform`. Put platform work —
+app data, storage, notifications — in a [job](../../automation/jobs/), and have
+the document read what the job wrote.
+
+Only the rendered output is served. Your source files, `renv.lock` and
+everything else in the repository return 404.
+
+## Choosing the file
+
+With more than one candidate at the root, or a document in a subfolder, name it:
+
+```toml
+# toft.toml
+[notebook]
+file = "reports/weekly.qmd"     # or "reports/weekly.Rmd"
+```
+
+The same table works for R Markdown. An `.Rmd` is knitted, so its `engine` is
+`"knitr"` or left out; any other engine is refused, with a hint.
+
+An R Markdown document is knitted in its own folder, as RStudio's **Knit**
+button does: a report at `reports/weekly.Rmd` reads `reports/data.csv` as
+`data.csv`, the same on your machine and on Toft.
+
+## Quarto: Python or R
+
+A `.qmd` runs as R when, in this order:
+
+1. `toft.toml` sets `[notebook] engine = "knitr"` (or `"jupyter"` for Python).
+2. The document's YAML header has `engine: knitr` or a top-level `knitr:` key.
+3. It contains an R chunk (` ```{r} `).
+
+Otherwise it runs as Python.

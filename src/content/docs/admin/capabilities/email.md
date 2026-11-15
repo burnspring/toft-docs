@@ -1,0 +1,74 @@
+---
+title: Email and notifications
+description: Configure the mail relay, who gets notified, and where links point — a dead relay never fails anything.
+---
+
+Configure mail in **Admin → Email**, which has a test send. Changes apply at
+runtime.
+
+:::note[Never load-bearing]
+No send can fail or block the action that triggered it. Notifications tell people
+sooner; the record is the [audit log](../../security/audit/).
+:::
+
+## Transport
+
+SMTP, or an HTTPS sending API (Resend) where outbound 587 is blocked and 443 is not.
+
+| Setting | Use |
+|---|---|
+| `email_enabled` | Send email at all |
+| `email_transport` | SMTP or sending API |
+| `email_host`, `email_port` | 587 for STARTTLS, 465 for implicit TLS |
+| `email_security` | STARTTLS, implicit TLS, or none |
+| `email_username`, `email_password` | Leave blank for a relay that needs no login |
+| `email_api_provider`, `email_api_key` | For the sending API; a separate field from the SMTP password |
+| `email_skip_verify` | Accept a self-signed certificate on an internal relay (a workaround) |
+| `email_from_address`, `email_from_name`, `email_reply_to` | Sender identity |
+
+Passwords and API keys are write-only: never read back and never in a settings export.
+
+## Who is notified
+
+| Setting | Sends |
+|---|---|
+| `email_notify_admin` | Mail to system administrators about the install |
+| `email_admin_group_address` | Sends administrator mail to one distribution list instead of each administrator — recommended |
+| `email_notify_app` | Mail to people about their own apps and access |
+
+A notification's audience is set on its template, not its channel. Template copy
+must read correctly on any channel — don't write "this email".
+
+## Whose name is on it
+
+Every platform message ends *Sent by <name> at <address>*, in both the HTML and
+the plain-text part. The name is **Install name** on Admin → Settings — “Toft”
+until you set one — and it also heads the HTML message and appears in Slack posts
+and Teams or webhook cards, so a staging and a production install are told apart
+in words. Mail an app sends comes from `<App> (via <name>)`.
+
+The **From name** above is separate and unchanged by it. When it is empty and the
+install has a name, the Email page offers to fill it in; nothing changes until you
+save.
+
+## Links in mail
+
+`public_base_url` (**Address**) is the address Toft's own links use: sign-in
+links, and links in Toft's email and Slack messages. Leave it blank to use
+`BASE_URL` from the install's configuration; the page shows that value under
+the field.
+
+Links that apps build themselves (with the SDK's `url()`) start from the apps
+address instead, `APPS_BASE_URL`. Settings shows it read-only, as **Apps are
+served at**, when it differs from the Address. Changing it is a configuration
+change and a restart: the chart's `platform.appsBaseUrl`, the compose bundle's
+`.env`, or your infrastructure code. Links already sent keep the old address,
+so keep the old name redirecting for a while after a move.
+
+## Channels and replies
+
+- The platform can also post notifications to a connected Slack or PagerDuty
+  [integration](../integrations/) where an audience allows it. File kinds carry none.
+- Replies to mail **an app** sends go to the app's owner. A group-owned app has no
+  owner address, so replies go to the install's reply-to; the app's
+  **Integrations** tab says which applies.

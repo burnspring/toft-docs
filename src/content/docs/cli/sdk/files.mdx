@@ -1,0 +1,331 @@
+---
+title: Files and scratch space
+description: Ephemeral scratch for work in progress, and durable storage an administrator attaches to your app.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+| | Scratch | Storage |
+|---|---|---|
+| Lifetime | Wiped on every start, restart and redeploy | Durable |
+| Set up by | The platform, for every app | An administrator, per app |
+| Use for | Uploads being processed, intermediate files | Reports, datasets, anything you keep |
+
+## Scratch
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+toft.scratch_dir("uploads")          # pathlib.Path, created if needed
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+toft.scratchDir("uploads");
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+dir, err := toft.ScratchDir("uploads")
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+scratch_dir()                        # no subfolder argument in R
+```
+
+</TabItem>
+</Tabs>
+
+Per app, never backed up, never shared. `TMPDIR` points at the same place.
+The parts you pass stay inside it: an absolute part, or a `..` that climbs out of
+the scratch folder, is refused with `bad_request` (a `..` that stays inside is
+fine). Off-platform, every SDK uses a private folder (mode `0700`), so local
+runs work and other users on the machine can't read it. All four create
+`toft-scratch-<uid>/<hash>` under the system temp directory, where `<hash>` is 12
+hex characters of the working directory's hash — so two apps in development do
+not share one — and it outlives the
+process, so a second local run finds what the first left there. If that folder
+cannot be made private, R falls back to its session's temporary directory
+(`tempdir()`), which is removed when the R session ends.
+
+### One browser session's corner
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+sid = request.headers.get("X-Toft-Session") or request.cookies.get("viewer_sid") or toft.new_session_id()
+workdir = toft.session_scratch_dir(sid)
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+toft.sessionScratchDir(sessionId);
+toft.newSessionId();
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+toft.SessionScratchDir(sessionID)
+toft.NewSessionID()
+```
+
+</TabItem>
+</Tabs>
+
+The proxy sends a per-login id in `X-Toft-Session`. Anonymous visitors carry
+none, so mint one with `new_session_id()` and keep it in your own cookie. Never
+substitute a fixed string: every anonymous visitor would share one directory.
+Shiny and Streamlit already separate sessions and don't need this.
+
+## Storage
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+toft.storage("reports").path                 # an attached volume or store, by name
+toft.store("reports").put("nightly.parquet") # copy a file into a store
+toft.mounts()                                # everything attached
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+toft.storage("reports").path;
+await toft.store("reports").put(file);
+toft.mounts();
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+m, err := toft.Storage("reports")            // m.Path
+s, err := toft.Store("reports")
+_, err = s.Put(localPath, "nightly.parquet")
+all, err := toft.Mounts()
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+storage("reports")$path
+store_put(store("reports"), "report.parquet")   # or store_put("reports", ...)
+mounts()
+```
+
+</TabItem>
+</Tabs>
+
+In R, every `store_*()` function takes the store itself or just its name:
+`store_upload("drop", "x.csv")` is `store_upload(store("drop"), "x.csv")`.
+
+Storage is resolved **by name**. The administrator decides what `"reports"`
+points at, so the same code works in either execution mode and on another
+install. Each one carries its `access` level: Python `read_only`, Node
+`readOnly` (and `writable`), Go `ReadOnly()`.
+
+`mounts()` lists every attachment with the same fields in all four languages:
+`name`, `kind`, `path`, `access`, `folder`, `read_only` and `mounted`. In R
+they are list elements; Node prints and JSON-encodes them under those names;
+in Go they are the encoded `Mount`, with `ReadOnly()` and `Mounted()` as
+methods; in Python they are attributes, and `m.to_dict()` is the JSON form.
+
+A `.sqlite` or `.duckdb` file on an attached volume is opened directly at its path.
+
+### A store, mounted or not
+
+A store is also reached through Toft's signed URLs, whether or not it is
+mounted. On an install with no cluster, that is the only way: the store has no
+path, `.path` raises, and `put` tells you to use `upload`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+s = toft.store("uploads")
+s.upload("report.csv")                        # new files only, at write
+s.upload("out/q1.csv", name="2026/q1.csv")    # stored under a name of your choosing
+data = s.download("report.csv")
+link = s.url("report.csv", attachment=True)   # for a browser, valid 15 minutes
+s.remove("report.csv")                        # needs full
+page = s.list("2026/")                        # iterate it; .prefixes, .next_cursor
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+const s = toft.store("uploads");
+await s.upload("report.csv");
+await s.upload("out/q1.csv", "2026/q1.csv");    // stored under a name of your choosing
+const link = await s.url("report.csv", { attachment: true });
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+s, err := toft.Store("uploads")               // s.Mounted() is false with no cluster
+_, err = s.Upload(ctx, localPath, "")            // "" keeps the file's own name
+_, err = s.Upload(ctx, "out/q1.csv", "2026/q1.csv")
+link, err := s.URL(ctx, "report.csv", true)
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+s <- store("uploads")
+store_upload(s, "report.csv")
+store_upload(s, "out/q1.csv", "2026/q1.csv")
+store_url(s, "report.csv", attachment = TRUE)
+```
+
+</TabItem>
+</Tabs>
+
+`upload` stores the file under its own name unless you give one, and returns
+the name it stored. The bytes go straight between your app and the object store. Anyone holding a
+link from `url` can read that file until it expires, so don't log one.
+
+### A link to send someone
+
+For a link that goes in an email, a Slack message or a report, use `link`
+instead of `url`. It works from a job, never expires, and carries no
+credential — it's your install's address plus the store and the file name:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+link = toft.store("reports").link("2026-11/summary.pdf")
+# https://toft.example.com/files/reports/2026-11/summary.pdf
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+const link = await toft.store("reports").link("2026-11/summary.pdf");
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+s, err := toft.Store("reports")
+link, err := s.Link(ctx, "2026-11/summary.pdf")
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+link <- store_link(store("reports"), "2026-11/summary.pdf")
+```
+
+</TabItem>
+</Tabs>
+
+**Only people who have been given access to the store can open the link.**
+Toft signs them in and checks their access when they click. Everyone else
+sees "Not found", and your app can't tell in advance who that will be. So give
+the recipients access to the store first (an administrator does it on the
+store's page under Admin → Storage), or send them something else.
+
+Opening the link hands the browser a short-lived address for the file, good
+for one minute. Revoking someone's access stops new opens at once; an address
+already opened stays good for up to that minute.
+
+The link opens whatever is at that name when it's clicked. If your job
+overwrites `latest.pdf` every night, last week's email opens tonight's file —
+write a dated name instead. The file doesn't need to exist when you build the
+link. `link` also works on a folder on the server's own disk
+(`toft.storage("name").link(...)`).
+
+:::caution[R: write with store_put]
+`file.copy()` onto a store mount creates an empty file and returns `FALSE`.
+Use `store_put()`. Given a name, `store_put()` copies onto whatever is mounted
+under it — a mounted volume as well as a mounted store, as `put()` does in the
+other languages. The other `store_*()` functions are for stores only.
+:::
+
+### One name, attached twice
+
+An administrator can attach one resource twice, for example its root read-only and
+a folder writable. Both arrive under the same name; name the folder to pick one:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+toft.storage("drop", folder="backup")
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+toft.storage("drop", { folder: "backup" });
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+toft.StorageIn("drop", "backup")             // and toft.StoreIn
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+storage("drop", "backup")
+```
+
+</TabItem>
+</Tabs>
+
+With no folder named, a name that matches two attachments raises and lists what
+is attached. An empty folder (`""`) means the root. A folder that is absolute,
+ends in `/`, or has a `.` or `..` segment is `invalid_name`, in all four
+languages.
+
+### Rules
+
+- **Absent, not empty.** Asking for a name nobody attached raises `not_mapped`
+  and names what is attached — in every language, for every operation (in Go,
+  each method of the empty `Mount` returned beside the error). `mounts()` with
+  nothing attached returns an empty list; the `TOFT_STORAGE` variable it reads
+  is then absent altogether, not `[]`. Off the platform — the platform's
+  variables absent and `TOFT_STORAGE` unset or blank — `storage()` and
+  `store()` raise `off_platform` instead, in all four languages. A
+  `TOFT_STORAGE` of `[]` reads as a platform that attached nothing, so a name
+  is `not_mapped`. Set
+  `TOFT_STORAGE` to stand a mount in locally; an entry in it without its
+  `name`, `kind` or `access` is `storage_env_invalid`.
+- **The fix for `not_mapped`** is an attachment: an administrator on the app's
+  Storage tab, or a [`[[storage]]`](../../../user/build/toft-toml/#storage)
+  entry in `toft.toml` from someone allowed to attach it. The SDK's message
+  names only the first.
+- **An app's attachment and a person's grant are separate.** Your app having
+  `"reports"` attached doesn't let you browse it, and your grant gives your app
+  nothing. People use [`toft store`](../../cli/commands/#toft-store).
+- **`put` never escapes the storage.** A name that is really a path outside it is
+  refused, and so is a write to storage attached read only.

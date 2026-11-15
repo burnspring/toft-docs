@@ -1,0 +1,141 @@
+---
+title: CI and automation
+description: Run toft unattended — credentials, a deploy pipeline, and parsing --json output.
+---
+
+## Credentials
+
+Use a **deploy key** (`toftd_`) from **Admin → Deploy keys**. It belongs to no
+person, so it keeps working when people leave, and it can do less than a
+personal key.
+
+```yaml
+env:
+  TOFT_URL:   https://toft.corp
+  TOFT_TOKEN: ${{ secrets.TOFT_DEPLOY_KEY }}
+```
+
+Set both or neither. If the runner mounts secrets as files, use
+`TOFT_TOKEN_FILE=<path>` instead of `TOFT_TOKEN`: a path is not sensitive, while
+an environment variable is visible in `/proc` and inherited by child processes.
+
+A deploy key can create apps, deploy, roll back, restart, stop, start, rerun and list jobs and read their runs, set
+environment variables, and read logs, events and dependencies. It cannot use `toft store`, pause schedules, or manage
+keys and grants, and it cannot open the app itself: `toft fetch` and
+`--verify` take a personal key or a browser session. For those, use a full personal key
+(`toftu_`).
+
+## No prompts
+
+`toft` treats a run as unattended when `--yes` is passed, `CI` is set, or stdin
+is not a terminal. It then never prompts: anything that needs a confirmation
+(`create`, `rollback`, `delete`) is refused with exit 2 unless you pass
+`--yes`.
+
+## A deploy pipeline
+
+```bash
+set -euo pipefail
+
+toft whoami --app my-app                 # exits 3 if the key cannot be used
+toft check --app my-app                  # exits 1 if the deploy would be refused (works before the app exists)
+toft deploy --logs --app my-app          # waits for the deploy; exits 1 if the build fails
+toft job run migrate --app my-app        # exits 1 if the migration fails
+toft restart --wait --app my-app         # exits 1 if the app does not come up
+```
+
+Each step fails the pipeline on its own; no output parsing is needed. If a step
+fails, `toft events` says what the platform noticed. For a batch app, drop the
+`restart` line.
+
+A health check through the app (`toft fetch /healthz`, or `toft deploy
+--verify /healthz`) needs a public app, or a personal key of an account
+granted on the app — a deploy key never opens an app.
+
+## Setting secrets from a pipeline
+
+The deploy key can set the app's environment variables, so a pipeline can
+rotate a secret without anyone's personal credential. Pipe values in so they
+never reach the command line:
+
+```bash
+printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD" | toft env set --from-file - --app my-app
+toft restart --wait --app my-app
+```
+
+A new variable is visible unless you add `--sensitive`, which a secret like
+this wants. To fill a fresh install without overwriting values someone has
+already set, add `--only-missing`: it fills only empty variables. A `.env` file
+in the working tree is never uploaded by `toft deploy`; send it with
+`toft env set --from-file .env`.
+
+## Re-running a day
+
+```bash
+toft job run nightly-extract --app my-app --for 2026-10-06T03:00:00+01:00
+```
+
+`--for` names the instant the run is for; the job reads it as
+`TOFT_SCHEDULED_FOR`, with the offset you typed (`+01:00` here) kept. A value
+without an offset is read as UTC.
+
+## Parsing `--json`
+
+- **One JSON document per line.** A watched deploy streams a frame per phase,
+  then a result object. A failed job run prints the run, then the error. Read
+  line by line, as `jq` does.
+- **A list is one document per row, never an array**, and an empty list prints
+  nothing: `toft apps --json | jq -s length` counts the apps.
+- **Errors are JSON too**: `{"error", "kind", "code", "exit", "retryable"}` on
+  stdout, plus `hint` when the install named a next step, with the sentence on
+  stderr. Retry only when `retryable` is true. See
+  [Errors as JSON](../exit-codes/#errors-as-json).
+- **A failed deploy carries `reason`**, the message, and its detail (a log tail
+  or dependency findings), with a `code` (`deploy_failed` when nothing finer
+  applies) and `retryable: false`. Branch on `reason` or `code`, not the
+  message.
+- **Warnings are sentences, with codes beside them.** A deploy's or a check's
+  `warnings` are for a person to read; `warning_details` gives each a `code` to
+  branch on. A deploy that carried a key file such as `server.key` says so in
+  `warnings`; a `.env` file is never uploaded.
+- **Piped output has no color codes**, the app's own included, so a captured
+  `toft logs` is plain text.
+- **The human output may change.** Script against `--json`.
+
+```bash
+toft status --json | jq -r .url
+```
+
+## Reaching a private app
+
+A new app is private, so an anonymous request answers `authentication
+required`. `toft fetch` sends your key for you; the install checks it and
+removes it before the app sees the request:
+
+```bash
+toft fetch /api/report --expect 200
+toft fetch / --anonymous --expect 401     # confirm it is still private
+```
+
+From another tool, send the key as a bearer token to the app's URL:
+
+```bash
+URL=$(toft status --json | jq -r .url)
+curl -fsS -H "Authorization: Bearer $TOFT_TOKEN" "$URL/"
+```
+
+## Scanning the estate
+
+A deploy key can read the scan-target list at `GET /api/v1/admin/estate/targets`.
+Send `X-Toft-Scan: 1` on scan traffic. It grants nothing; it stops the scan from
+counting as use of the app.
+
+## Don't
+
+- Don't retry exit 1 unless `retryable` is true. A failed build fails the same
+  way on the same commit; a queued deployment (`deploy_queued`) is worth waiting
+  for.
+- Don't retry a refusal whose `retryable` is false. It will refuse again.
+- Don't read the key out of `credentials.toml`. Use `toft api`.
+- Don't re-point a published git tag. Anything resolved by ref picks up the move
+  at its next deploy.

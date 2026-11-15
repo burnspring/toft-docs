@@ -1,0 +1,57 @@
+---
+title: Dependencies and policy
+description: How Toft checks your app's packages against advisories, and what to do when a deploy is refused.
+---
+
+The **Dependencies** tab lists the packages your app installs (npm, PyPI, Go, CRAN) and any advisories that match. It appears only when your administrator has turned on a dependency policy.
+
+:::caution[Not a security review]
+It reads package names and versions, not your code. It won't find a bug you wrote or a secret you committed.
+:::
+
+The top line shows the mode (**Blocking** or **Warning only**), the advisory data's age, the serving deployment, and the last check. **Check again** re-runs the check without redeploying.
+
+## What a policy can do
+
+In blocking mode, a policy refuses a **deploy** above a severity (optionally only when a fix exists) and, separately, for malicious packages. A restart is not a deploy, and stale advisory data never blocks.
+
+One setting, off by default, goes further: a background check **locks and stops** an app whose serving deployment has a malicious package, or a critical or high advisory if set that way. Waived findings never lock, and **Check again** never locks. An unlock alone is undone by the next check; the way out is a fixed deploy or a waiver. A locked app still accepts a deploy, and one without the package unlocks it. See [When an app is locked](../locked/).
+
+An R app's list shows every package its build installed, marked **installed** (yours), **platform** (Toft puts it in every R app) or **runtime** (your app installed it while running, found on shared installs). Commit `renv.lock` (`renv::snapshot()`) to pin your own.
+
+## When your deploy is refused
+
+The app page shows **Your last deploy was refused**; the build log names the package, version and advisory.
+
+Every finding names its `path`: for a package you list yourself it is `(this
+app) > <package>`, and for one that came in with another package it is the
+shortest chain from your app to it. When the refused package is not yours
+directly, upgrade the dependency of yours the chain starts with.
+
+If a Python package your app needs has no wheel for the app's Python — such as
+a pin on a release that ships only source — the release can't be checked. Under
+blocking mode it is refused, and the refusal names the way out: pin a release
+that publishes a wheel, or — when the package has a wheel for an earlier Python
+line this install offers — declare that line under
+[`[runtime]`](../../build/toft-toml/#runtime). A release with no Linux wheel for
+any line gets only the first. Under warning-only mode it deploys as not scanned.
+
+1. **Upgrade the package.** Usually the whole fix.
+2. **Ask for a waiver.** Only an administrator grants one, and it expires.
+3. **Argue it doesn't apply**, if you don't use the vulnerable code. Take it to your administrator.
+
+## SBOM
+
+Each successful deployment has **Download SBOM** in its **⋯** menu on the **Deployments** tab: a CycloneDX 1.6 file listing the packages that release installed. Where Toft could not read everything, the file says **incomplete** or **unknown** rather than complete. That happens, for example, with an app locked with pnpm or Yarn, an app with no lockfile, or vendored code. The deploy's warnings name what was missed. Downloading the same release twice gives the same file.
+
+API: `GET /api/v1/apps/{id}/deployments/{deploymentID}/sbom`. A personal API key or a deploy key can read it.
+
+## When there's no verdict
+
+| Message | Means |
+|---|---|
+| **This app declares no dependencies** | A static site with no manifest. |
+| **This app's packages cannot be listed** | An R app whose deployment recorded no packages — built before Toft read R libraries, or never served. Deploy again. |
+| **This deployment's packages haven't been recorded** | The next deploy will record them. |
+| **Nothing found, but coverage is thin** | CRAN advisory data is sparse, so silence means little. |
+| **Nothing has been checked yet** | No advisory data has loaded on this install, so an empty list is not a clean result. The deploy's warnings say so too. Ask your administrator to refresh it. |

@@ -1,0 +1,118 @@
+---
+title: Notifications
+description: Send Slack messages, email and files as the app, through integrations an administrator attached.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+toft.notify.slack("Ingest finished: 1,204 rows")
+toft.notify.slack_file("/tmp/recon.xlsx", title="Weekly reconciliation")
+toft.notify.email(to=["finance@example.com"], subject="Weekly report", text=body)
+toft.notify.send("teams", "Nightly load complete")
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+await toft.notify.slack("Ingest finished: 1,204 rows");
+await toft.notify.slackFile(file, { title: "Weekly reconciliation" });
+await toft.notify.email({ to, subject, text });
+await toft.notify.send("teams", "Nightly load complete");
+```
+
+</TabItem>
+<TabItem label="Go">
+
+```go
+toft.Notify.Slack(ctx, "Ingest finished: 1,204 rows")
+toft.Notify.SlackFile(ctx, file, toft.SlackFileOptions{Title: "Weekly reconciliation"})
+toft.Notify.Email(ctx, toft.EmailMessage{To: to, Subject: subject, Text: body})
+```
+
+</TabItem>
+<TabItem label="R">
+
+```r
+notify("slack", text = "Ingest finished: 1,204 rows")
+```
+
+</TabItem>
+</Tabs>
+
+Your app supplies the message. The platform supplies the identity: the bot
+token, the channel, the From address. Your app never holds or chooses them.
+Sending a `channel`, `folder` or `url` field is refused with
+`destination_not_allowed`, and an email's `from`, `reply_to` or headers with
+`sender_not_allowed`; the hint says the app's owners choose these on the
+Integrations tab. Node refuses these fields itself, before anything is
+sent (R passes them on, and the platform refuses them) — in Node, `channel`, `folder`, `url`, `routingKey` and the like; `from`,
+`replyTo` or `reply_to`, and `headers`. Node also refuses any other option a
+call does not take, as `bad_request` — on every call, not only notify. The
+refusal names the integration the send went to and the field.
+
+## The calls
+
+| Call (Python / Node) | Does |
+|---|---|
+| `send(kind, text, …)` | A message through any attached integration: `slack`, `teams`, `pagerduty`, … Options: `title`, `severity`, `dedup_key`. |
+| `resolve(kind, dedup_key)` | Close an incident this app raised. |
+| `deliver(kind, file, name=…)` | Put a file through an integration, such as SharePoint. A file is added, never replaced. |
+| `slack(text)`, `slack_file(file)` | Slack shortcuts. |
+| `email(to, subject, text, …)` | Email to any address. Also `html`, `cc`, `bcc`, `attachments`. |
+| `status(send)` | Read back one send's record. |
+
+Go has `Slack`, `SlackFile`, `Email` and `Status`. R has `notify(kind, ...)`,
+whose named arguments become the message body; `notify(NULL, …)` is
+`bad_request`.
+
+An email `to` that is not a string or a list of strings — `None` included — is
+`bad_request` before anything is sent, as is a body that can't be encoded as
+JSON (`NaN` or `Inf` included). A string that is not an address is sent, and
+the platform refuses it with `bad_recipient` (400). A message or attachment over
+a size limit is `too_large` (413) — a Slack text over 3,000 characters, an
+email's text, HTML or subject over its limit, or a body too big to accept at
+all. Every one of these refusals carries a `hint`, and a size refusal's names
+the limit.
+
+## Ask first
+
+```python
+if not toft.app.can("slack"):
+    show_setup_hint()
+```
+
+An app has no integration of a kind until an administrator attaches one.
+
+## What a send promises
+
+A send returns once the platform has **accepted and recorded** it. Delivery
+happens afterwards. The returned `Send` names the record:
+
+```js
+const send = await toft.notify.slack("done");
+const later = await toft.notify.status(send);   // .delivered, .blocked, .done
+```
+
+Every send passes the same checks, re-checked just before delivery. An
+integration detached in between is refused, not sent. A destination that stops
+working fails; it never falls back to somewhere else.
+
+`blocked` means an administrator turned the capability off after the send was
+accepted. Retrying won't help until it is re-attached.
+
+## From a job
+
+The same calls work inside a [job](../jobs/), in all four languages, using the
+run's own credential. Send before your command exits: a finished run's
+credential is refused.
+
+## Limits
+
+- **Outbound only.** No integration can read a channel or list files.
+- **Records outlive the app.** A message or file already delivered stays where
+  it landed. Detaching an integration deletes nothing.

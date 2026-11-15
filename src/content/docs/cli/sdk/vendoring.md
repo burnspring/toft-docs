@@ -1,0 +1,82 @@
+---
+title: Vendoring it
+description: Put the install's own SDK on your disk with toft sdk vendor, for local builds, tests and your editor.
+---
+
+A deployed app never needs this: the build installs the SDK. Vendor it when your
+editor, `go build`, tests or CI need to see the package before the deploy.
+
+```bash
+toft sdk vendor                  # language detected from the tree
+toft sdk vendor --lang python
+```
+
+It writes the install's own SDK into `.toft/sdk-<lang>/`, so you compile against
+exactly what that install's build would use.
+
+| Flag | |
+|---|---|
+| `--lang <go\|python\|node\|r>` | Which SDK. Detected from the tree when absent. A tree that is two languages at once is refused, exit 2. |
+| `--dir <path>` | Where to write it. Default `.toft`. |
+
+The install decides which languages it serves. Vendoring covers **Go, Python,
+Node and R**; asking for another is refused with `sdk_language_unknown`, exit 2.
+
+## Per language
+
+| Language | Lands in | Then |
+|---|---|---|
+| Go | `.toft/sdk-go/`, plus a `go.work` that uses it | Nothing. No `require` line is needed. |
+| Python | `.toft/sdk-python/` | `uv pip install -e .toft/sdk-python` (or `pip install -e`) |
+| Node | `.toft/sdk-node/` | Add `"toft-sdk": "file:.toft/sdk-node"` to `package.json`, then `npm install`. |
+| R | `.toft/sdk-r/` | `R CMD INSTALL .toft/sdk-r` into the library you develop against. |
+
+`toft` prints the next step for you.
+
+**Python's and R's copies are added to `.gitignore`** (unless a rule already
+covers them), so the next deploy does not ship them and the platform installs its
+own. `--json`
+names the line it added as `gitignore`.
+
+**Node's copy ships on purpose.** `package.json` names it as a `file:`
+dependency, so the build's `npm ci` needs it, and the platform then keeps your
+copy.
+
+The Node package is `toft-sdk`. Its old name, `@larchway/toft`, still works
+through 0.10.x but is deprecated; the build log says so when an app uses it.
+
+:::caution[Go: ignore both or neither]
+`go.work` and `.toft/` ship with `toft deploy`, and the platform then uses your
+copy. Ignore both in `.gitignore`, or neither. Ignoring only `.toft/` leaves a
+`go.work` that names a folder that did not ship, and the build fails on the
+install. `toft sdk vendor` warns when it sees this.
+:::
+
+## Which copy is this
+
+`toft sdk vendor` prints a build id for the copy it wrote:
+
+```text
+Wrote the python SDK (toft 0.3.0) to .toft/sdk-python — 14 files, from https://toft.corp
+  Build 9ed4b6bdfa26 — the deploy log names the copy your app was built with; they should match.
+```
+
+The deploy log prints the build id of the copy your app was built with. On an
+isolated install the two can differ if the runner image is older than the
+platform. The deploy still succeeds, with a warning; tell your administrator to
+rebuild the image.
+
+With `--json`, `sdk_version` is the version the SDK itself declares and
+`install_version` is the install's. `version` is the install's version too, as
+before.
+
+## Keeping it current
+
+Re-run `toft sdk vendor` after the install is upgraded, and read the diff. To go
+back to the platform's own copy, delete `.toft/` (and `go.work` for Go, or the
+`file:` dependency for Node).
+
+The same source is published at
+[burnspring/toft-sdk](https://github.com/burnspring/toft-sdk)
+(Apache-2.0), tagged with the platform version. Vendor from your install rather
+than the public repository, so the copy matches the platform you deploy to.
