@@ -147,7 +147,8 @@ is defined; every deploy makes the app's jobs match it.
 Declare parameters as `[jobs.<name>.params.<param>]` with `type` (`string`,
 `int`, `float` or `bool`), `required` or `default`, `choices` and `help`. A
 `float` parameter reaches the job as a float — `2` and `"2"` arrive as `2.0`,
-and so does a default.
+and so does a default. A job with a `schedule` cannot have a `required`
+parameter, because a scheduled run is given none: give it a `default`.
 
 A job's memory and CPU are not declared here: your administrator sets them, as
 the install's job defaults or an override on one job. A `memory` or `cpu` key

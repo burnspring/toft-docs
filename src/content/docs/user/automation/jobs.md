@@ -70,7 +70,7 @@ A parameter is declared under `[jobs.<name>.params.<param>]`:
 | Key | Notes |
 |---|---|
 | `type` | `string`, `int`, `float` or `bool`. A `float` arrives as a float — `2` becomes `2.0` — whether it was sent as `"2"`, `2` or came from the default. |
-| `required` | `true` if every run must be given it. Not together with `default`. |
+| `required` | `true` if every run must be given it. Not together with `default`, and not on a job with a `schedule`: a scheduled run starts with no parameters, so the deploy is refused. Give the parameter a `default` instead. |
 | `default` | Used when a run is not given it. |
 | `choices` | The only values allowed. |
 | `help` | Shown next to the field in Toft. |
