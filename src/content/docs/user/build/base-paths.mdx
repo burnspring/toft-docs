@@ -40,7 +40,15 @@ URLs — must land under the prefix.
 <link rel="stylesheet" href="{{ base_path }}/styles.css">
 ```
 
-Relative URLs work everywhere. Use `BASE_PATH` when you can't be relative.
+A relative URL resolves against the page it is on, so it only lands in your
+app when the page's address ends in a slash. Static sites, notebooks and marimo
+are redirected from `/apps/<slug>` to `/apps/<slug>/`; other apps are not, and a
+visitor who opens `/apps/reports` without the slash gets `/apps/styles.css`
+from the second line. The `BASE_PATH` form is right from every page.
+
+A link that leaves your app (an email, a Slack message, a PDF) needs the full
+address. Use `toft.app.url(path)` from the [app SDK](../../../cli/sdk/app/) instead of
+building it yourself.
 
 ## Redirects don't need to
 
